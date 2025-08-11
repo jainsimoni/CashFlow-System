@@ -1,0 +1,331 @@
+#include <iostream>
+#include <unordered_map>
+#include <vector>
+#include <string>
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <climits>
+using namespace std;
+
+class User {
+public:
+    string name;
+    float balance;
+    User(string n) : name(n), balance(0) {}
+};
+
+class Group {
+    string groupName;
+    unordered_map<string, User*> users;
+
+    // History stack: vector of (name -> balance) snapshots
+    vector<unordered_map<string, float>> history;
+
+    void saveState() {
+        unordered_map<string, float> snapshot;
+        for (auto& u : users) {
+            snapshot[u.first] = u.second->balance;
+        }
+        history.push_back(snapshot);
+    }
+
+    // Get index of person with max credit
+    int getMaxCreditIndex(vector<float>& amount) {
+        int maxIndex = 0;
+        for (int i = 1; i < amount.size(); i++)
+            if (amount[i] > amount[maxIndex])
+                maxIndex = i;
+        return maxIndex;
+    }
+
+    // Get index of person with max debit
+    int getMaxDebitIndex(vector<float>& amount) {
+        int minIndex = 0;
+        for (int i = 1; i < amount.size(); i++)
+            if (amount[i] < amount[minIndex])
+                minIndex = i;
+        return minIndex;
+    }
+
+    // Recursive greedy settlement
+    void minimizeCashFlow(vector<float>& amount, vector<string>& names) {
+        int maxCred = getMaxCreditIndex(amount);
+        int maxDebt = getMaxDebitIndex(amount);
+
+        if (abs(amount[maxCred]) < 1e-6 && abs(amount[maxDebt]) < 1e-6)
+            return;
+
+        float minAmount = min(abs(amount[maxCred]), abs(amount[maxDebt]));
+        amount[maxCred] -= minAmount;
+        amount[maxDebt] += minAmount;
+
+        cout << names[maxDebt] << " pays " << minAmount << " to " << names[maxCred] << endl;
+
+        minimizeCashFlow(amount, names);
+    }
+
+public:
+    Group(string name) : groupName(name) {}
+
+    void addUser(string name) {
+        saveState();
+        if (users.find(name) == users.end()) {
+            users[name] = new User(name);
+            cout << "User \"" << name << "\" added to group \"" << groupName << "\".\n";
+        } else {
+            cout << "User \"" << name << "\" already exists in group \"" << groupName << "\".\n";
+        }
+    }
+
+    void removeUser(string name) {
+        if (users.find(name) != users.end()) {
+            saveState();
+            users.erase(name);
+            cout << "User \"" << name << "\" removed from group \"" << groupName << "\".\n";
+            displayBalances();
+        } else {
+            cout << "Error: User \"" << name << "\" does not exist in group \"" << groupName << "\".\n";
+        }
+    }
+
+    void addExpense(vector<string> payers, vector<float> amountsPaid, float totalAmount, vector<string> involvedUsers, bool isEqual) {
+        for (auto& payer : payers) {
+            if (users.find(payer) == users.end()) {
+                cout << "Error: Payer \"" << payer << "\" does not exist in group \"" << groupName << "\".\n";
+                return;
+            }
+        }
+        if (payers.size() != amountsPaid.size()) {
+            cout << "Error: The number of payers does not match the number of amounts paid.\n";
+            return;
+        }
+        float totalPaidByPayers = 0;
+        for (float amount : amountsPaid) {
+            totalPaidByPayers += amount;
+        }
+        if (totalPaidByPayers != totalAmount) {
+            cout << "Error: The total amount paid (" << totalPaidByPayers << ") does not match the expense amount (" << totalAmount << ").\n";
+            return;
+        }
+        vector<float> amountsOwed(involvedUsers.size(), 0);
+        if (isEqual) {
+            float sharePerPerson = totalAmount / involvedUsers.size();
+            for (int i = 0; i < involvedUsers.size(); i++) {
+                amountsOwed[i] = sharePerPerson;
+            }
+        } else {
+            cout << "Since the expense is not split equally, enter how much each involved user owes:\n";
+            for (int i = 0; i < involvedUsers.size(); i++) {
+                cout << "Enter the amount owed by " << involvedUsers[i] << ": ";
+                cin >> amountsOwed[i];
+            }
+        }
+
+        saveState(); // Save before making changes
+
+        for (int i = 0; i < involvedUsers.size(); i++) {
+            string user = involvedUsers[i];
+            if (find(payers.begin(), payers.end(), user) == payers.end()) {
+                for (int j = 0; j < payers.size(); j++) {
+                    string payer = payers[j];
+                    float amountOwed = amountsOwed[i] * (amountsPaid[j] / totalPaidByPayers);
+                    users[payer]->balance += amountOwed;
+                    users[user]->balance -= amountOwed;
+                }
+            }
+        }
+        cout << "Expense of " << totalAmount << " added successfully.\n";
+        displayBalances();
+    }
+
+    void undo() {
+        if (history.empty()) {
+            cout << "No previous actions to undo.\n";
+            return;
+        }
+        unordered_map<string, float> lastState = history.back();
+        history.pop_back();
+        for (auto& entry : lastState) {
+            if (users.find(entry.first) != users.end()) {
+                users[entry.first]->balance = entry.second;
+            } else {
+                users[entry.first] = new User(entry.first);
+                users[entry.first]->balance = entry.second;
+            }
+        }
+        cout << "Last action undone successfully.\n";
+        displayBalances();
+    }
+
+    void displayBalances() {
+        if (users.empty()) {
+            cout << "No users in group \"" << groupName << "\".\n";
+            return;
+        }
+        cout << "\nCurrent balances in group \"" << groupName << "\":\n";
+        for (auto& user : users) {
+            cout << user.first << ": " << user.second->balance << "\n";
+        }
+    }
+
+    void simplifyDebts() {
+        vector<float> balances;
+        vector<string> names;
+        for (auto& user : users) {
+            if (abs(user.second->balance) > 1e-6) {
+                balances.push_back(user.second->balance);
+                names.push_back(user.first);
+            }
+        }
+        if (balances.empty()) {
+            cout << "No debts to simplify in group \"" << groupName << "\".\n";
+            return;
+        }
+        cout << "\nDebts simplified using greedy algorithm:\n";
+        minimizeCashFlow(balances, names);
+    }
+};
+
+void displayMainMenu() {
+    cout << "\nMain Menu:\n";
+    cout << "1. Create a new group\n";
+    cout << "2. Add users to a group\n";
+    cout << "3. Remove a user from a group\n";
+    cout << "4. Add an expense to a group\n";
+    cout << "5. Display balances of a group\n";
+    cout << "6. Exit\n";
+    cout << "7. Simplify debts in a group\n";
+    cout << "8. Undo last action\n";
+    cout << "Enter your choice: ";
+}
+
+int main() {
+    unordered_map<string, Group*> groups;
+    int choice;
+    cout << "Welcome to Cashflow!\n";
+    while (true) {
+        displayMainMenu();
+        while (!(cin >> choice)) {
+            cout << "Invalid input. Please enter a number between 1 and 8: ";
+            cin.clear();
+            cin.ignore(numeric_limits<streamsize>::max(), '\n');
+        }
+        if (choice == 6) {
+            cout << "Exiting the system. Thank you!\n";
+            break;
+        }
+        string groupName, userName;
+        float amountPaid, totalAmount;
+        int numInvolved;
+        vector<string> involvedUsers, payers;
+        vector<float> amountsPaid;
+        bool isEqual;
+        switch (choice) {
+        case 1:
+            cout << "Enter the name of the new group: ";
+            cin >> groupName;
+            if (groups.find(groupName) == groups.end()) {
+                groups[groupName] = new Group(groupName);
+                cout << "Group \"" << groupName << "\" created successfully.\n";
+            } else {
+                cout << "Group \"" << groupName << "\" already exists.\n";
+            }
+            break;
+        case 2:
+            cout << "Enter the name of the group: ";
+            cin >> groupName;
+            if (groups.find(groupName) != groups.end()) {
+                int numUsers;
+                cout << "How many users do you want to add to the group? ";
+                cin >> numUsers;
+                for (int i = 0; i < numUsers; i++) {
+                    cout << "Enter the name of user " << i + 1 << ": ";
+                    cin >> userName;
+                    groups[groupName]->addUser(userName);
+                }
+            } else {
+                cout << "Group \"" << groupName << "\" does not exist.\n";
+            }
+            break;
+        case 3:
+            cout << "Enter the name of the group: ";
+            cin >> groupName;
+            if (groups.find(groupName) != groups.end()) {
+                cout << "Enter the name of the user to remove: ";
+                cin >> userName;
+                groups[groupName]->removeUser(userName);
+            } else {
+                cout << "Group \"" << groupName << "\" does not exist.\n";
+            }
+            break;
+        case 4:
+            cout << "Enter the name of the group: ";
+            cin >> groupName;
+            if (groups.find(groupName) != groups.end()) {
+                payers.clear();
+                amountsPaid.clear();
+                int numPayers;
+                cout << "How many payers are there? ";
+                cin >> numPayers;
+                for (int i = 0; i < numPayers; i++) {
+                    cout << "Enter the name of payer " << i + 1 << ": ";
+                    cin >> userName;
+                    payers.push_back(userName);
+                    cout << "Enter the amount paid by " << userName << ": ";
+                    cin >> amountPaid;
+                    amountsPaid.push_back(amountPaid);
+                }
+                cout << "Enter the total expense amount: ";
+                cin >> totalAmount;
+                cout << "How many people are involved in sharing this expense? ";
+                cin >> numInvolved;
+                involvedUsers.clear();
+                for (int i = 0; i < numInvolved; i++) {
+                    cout << "Enter name of involved user " << i + 1 << ": ";
+                    cin >> userName;
+                    involvedUsers.push_back(userName);
+                }
+                char equalSplitChoice;
+                cout << "Is the expense split equally among involved users? (y/n): ";
+                cin >> equalSplitChoice;
+                isEqual = (equalSplitChoice == 'y' || equalSplitChoice == 'Y');
+                groups[groupName]->addExpense(payers, amountsPaid, totalAmount, involvedUsers, isEqual);
+            } else {
+                cout << "Group \"" << groupName << "\" does not exist.\n";
+            }
+            break;
+        case 5:
+            cout << "Enter the name of the group: ";
+            cin >> groupName;
+            if (groups.find(groupName) != groups.end()) {
+                groups[groupName]->displayBalances();
+            } else {
+                cout << "Group \"" << groupName << "\" does not exist.\n";
+            }
+            break;
+        case 7:
+            cout << "Enter the name of the group: ";
+            cin >> groupName;
+            if (groups.find(groupName) != groups.end()) {
+                groups[groupName]->simplifyDebts();
+            } else {
+                cout << "Group \"" << groupName << "\" does not exist.\n";
+            }
+            break;
+        case 8:
+            cout << "Enter the name of the group: ";
+            cin >> groupName;
+            if (groups.find(groupName) != groups.end()) {
+                groups[groupName]->undo();
+            } else {
+                cout << "Group \"" << groupName << "\" does not exist.\n";
+            }
+            break;
+        default:
+            cout << "Invalid choice. Please enter a number between 1 and 8.\n";
+            break;
+        }
+    }
+    return 0;
+}
